@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+title: "titrationTools"
+message: "If you use this software in your research, please cite the repository."
+type: software
+authors:
+  - family-names: Bonizzoni
+    given-names: Marco
+date-released: 2026-05-20
+url: https://github.com/mabonizzoni/titrationTools
+
+# Optional but strongly recommended once you set up Zenodo
+# doi: 10.5281/zenodo.xxxxxxx
