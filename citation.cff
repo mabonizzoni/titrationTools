@@ -8,5 +8,4 @@ authors:
 date-released: 2026-05-20
 url: https://github.com/mabonizzoni/titrationTools
 
-# Optional but strongly recommended once you set up Zenodo
-# doi: 10.5281/zenodo.xxxxxxx
+doi: 10.5281/zenodo.20314456
