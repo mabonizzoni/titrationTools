@@ -85,9 +85,9 @@ Any option valid for ListLinePlot3D may also be supplied. Axis labels are intent
 (* private section: implementation code *)
 Begin["`Private`"]
 
-(* ================= *)
+(* ================== *)
 (* TITRATION EXPLORER *)
-(* ================= *)
+(* ================== *)
 Options[titrationExplorer]={"tab"->"dilution corrected","maxeq"->All};
 titrationExplorer[fileName_String,OptionsPattern[]]:=
 DynamicModule[
@@ -282,7 +282,8 @@ options:OptionsPattern[{waterfallPlot,ListLinePlot3D}]
 
 (*Helper function to check whether the first row in the data set is a sample index.*)
 (*Function compares the numeric entries against {1, 2, 3, ...}. A tolerance of 0.5 accommodates float imprecision on import.*)(*Absorbance values would differ from a sequential integer counter by far more than 0.5.*)
-indexRowQ[row_]:=With[{nums=row[[2;;]]},VectorQ[nums,NumericQ]&&Max@Abs[nums-Range@Length@nums]<0.5];
+(*The Cases expression retains only numbers, in case some empty cells are also imported as strings*)
+indexRowQ[row_]:=With[{nums=Cases[row[[2;;]],_?NumericQ]},VectorQ[nums,NumericQ]&&Max@Abs[nums-Range@Length@nums]<0.5];
 
 (*Expected data layout from the HP 8452A UV Vis machine and Olis software:*)
 (*Row 1 contains sample indices, column 1 contains wavelengths, the remaining columns are spectra*)
@@ -335,3 +336,6 @@ Sequence@@FilterRules[{options},Options@ListLinePlot3D]
 
 End[](* end of the private portion of the package *)
 EndPackage[]
+
+
+
