@@ -75,9 +75,9 @@ waterfallPlot[data, howMany, colors, options]
 
 ---
 
-## Module 2: mcrtools.py (Python / SpectroChemPy)
+## Module 2: mcr_tools.py (Python / SpectroChemPy)
 
-`mcrtools.py` is a front end to the [SpectroChemPy](https://www.spectrochempy.fr/) library's MCR-ALS implementation. It handles data packaging, PCA rank analysis, and full MCR-ALS optimization with diagnostic plots suitable for publication.
+`mcr_tools.py` is a front end to the [SpectroChemPy](https://www.spectrochempy.fr/) library's MCR-ALS implementation. It handles data packaging, PCA rank analysis, and full MCR-ALS optimization with diagnostic plots suitable for publication.
 
 ### Dependencies
 
@@ -99,7 +99,7 @@ waterfallPlot[data, howMany, colors, options]
 ### Quick start
 
 ```python
-import mcrtools as mcr
+import mcr_tools as mcr
 
 # Load data
 dataset = mcr.loadAndPackageData(
@@ -119,7 +119,7 @@ mcrModel, St, C = mcr.runMCR(dataset, guessIndices=[0, -1])
 
 ### Citation
 
-If you use `mcrtools.py`, please also cite SpectroChemPy:
+If you use `mcr_tools.py`, please also cite SpectroChemPy:
 
 > Travert Arnaud, Fernandez Christian (2026). *SpectroChemPy, a framework for processing, analyzing and modeling spectroscopic data for chemistry with Python* (version 0.9.4.dev74). Zenodo. DOI: [10.5281/zenodo.3823841](https://doi.org/10.5281/zenodo.3823841)
 
