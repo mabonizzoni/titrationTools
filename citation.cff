@@ -5,7 +5,7 @@ type: software
 authors:
   - family-names: Bonizzoni
     given-names: Marco
-date-released: 2026-05-20
+date-released: 2026-06-15
 url: https://github.com/mabonizzoni/titrationTools
 
-doi: 10.5281/zenodo.20315704
+doi: 10.5281/zenodo.20314455
