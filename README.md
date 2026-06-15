@@ -5,7 +5,7 @@ A toolkit for importing, analyzing, and visualizing spectrophotometric binding t
 titrationTools provides two complementary modules targeting different stages of a typical titration workflow:
 
 - **titrationTools.m** — A Wolfram Mathematica package for interactive exploration, formatted multi-plot grids, spectral animations, and 3D waterfall plots of UV-Vis or fluorescence titration series.
-- **mcrtools.py** — A Python module wrapping SpectroChemPy's MCR-ALS engine for multicomponent spectral resolution of titration datasets, including PCA rank analysis and diagnostic visualization.
+- **mcr_tools.py** — A Python module wrapping SpectroChemPy's MCR-ALS engine for multicomponent spectral resolution of titration datasets, including PCA rank analysis and diagnostic visualization.
 
 Both modules are designed to ingest the same matrix-style CSV or Excel data layouts common to UV-Vis spectrophotometers (developed and tested with an HP 8452A / Olis software workflow).
 
