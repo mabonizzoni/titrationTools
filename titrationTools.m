@@ -85,17 +85,22 @@ Any option valid for ListLinePlot3D may also be supplied. Axis labels are intent
 (* private section: implementation code *)
 Begin["`Private`"]
 
-(* ================== *)
+(* ================= *)
 (* TITRATION EXPLORER *)
-(* ================== *)
+(* ================= *)
 Options[titrationExplorer]={"tab"->"dilution corrected","maxeq"->All};
 titrationExplorer[fileName_String,OptionsPattern[]]:=
 DynamicModule[
-{all,equivalents,wavelengths,spectra,profiles,selectedWavelength=370,min,max},
+{all,equivalents,wavelengths,spectra,profiles,selectedWavelength,min,max},
 
 all=Import[fileName,{"Sheets",OptionValue["tab"]}];
 equivalents=Cases[all,{"equivalents",eq__}:>eq];
 wavelengths=Round@all[[First@FirstPosition[all,"Wavelength"]+1;;,1]];
+
+selectedWavelength=370;
+(*If 370 nm is not in the dataset, then automatically choose a wavelength in the middle of the existing range:*)
+If[!MemberQ[wavelengths,selectedWavelength],selectedWavelength=wavelengths[[Floor[Length[wavelengths]/2]]]];
+
 spectra=Map[
 (* form {wavelength, absorbance} pairs for each spectrum --> *)Transpose[{wavelengths,#}]&,
 Transpose@ (* spectral values --> *)all[[First@FirstPosition[all,"Wavelength"]+1;;,2;;]]
