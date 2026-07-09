@@ -7,7 +7,7 @@ titrationTools provides two complementary modules targeting different stages of 
 - **titrationTools.m** — A Wolfram Mathematica package for interactive exploration, formatted multi-plot grids, spectral animations, and 3D waterfall plots of UV-Vis or fluorescence titration series.
 - **mcr_tools.py** — A Python module wrapping SpectroChemPy's MCR-ALS engine for multicomponent spectral resolution of titration datasets, including PCA rank analysis and diagnostic visualization.
 
-Both modules are designed to ingest the same matrix-style CSV or Excel data layouts common to UV-Vis spectrophotometers (developed and tested with an HP 8452A / Olis software workflow).
+Both modules are designed to ingest the same matrix-style CSV or Excel data layouts common to UV-Vis spectrophotometers (developed and tested with an HP 8452A diode array spectrophotomer with Olis instrument control software or an ISS PC1 spectrofluorimeter with Vinci software).
 
 ---
 
@@ -26,7 +26,7 @@ Both modules are designed to ingest the same matrix-style CSV or Excel data layo
 Functions expect an Excel workbook with the following structure:
 
 - **Sheet name:** Defaults to `"dilution corrected"` (adjustable).
-- **Equivalents row:** A row containing the string `"equivalents"` followed by numerical titrant equivalent values.
+- **Titrant concentration rows:** A row containing the string `"equivalents"` or `"concentrations"` followed by numerical independent variable values. Both can be provided, in which case `titrationExplorer` will generate plots with two horizontal axes, one representing concentration and the other equivalents.
 - **Data table:** First column labeled `"Wavelength"` with wavelength values (nm) below; subsequent columns contain absorbance values for each spectrum in the titration sequence.
 
 ### Function reference
@@ -38,9 +38,16 @@ Imports titration data and generates an interactive dual-plot dashboard (spectra
 ```mathematica
 titrationExplorer[inputFile]
 titrationExplorer[inputFile, options]
+titrationExplorer[configAssociation]
 ```
 
-Options: `"tab"` (default: `"dilution corrected"`), `"maxeq"` (default: `All`).
+Options: `"tab"` (default: `"dilution corrected"`), `"maxeq"` (default: `All`), `"spectroscopy"` (default: `"UVVis"`).
+
+Alternatively, instead of positional arguments, the function also accepts a configuration `Association` with the following keys:
+- `"FileName"`: Path string to the Excel workbook containing the raw data and concentration information.
+- `"Tab"`: Sheet name string (default: `"dilution corrected"`).
+- `"MaxX"`: Maximum x-axis plot range value (default: `All`).
+- `"spectroscopy"`: String specifying `"UVVis"` or `"Fluorescence"` labels (default: `"UVVis"`).
 
 #### `titrationPrinter`
 
@@ -51,7 +58,7 @@ titrationPrinter[inputFile, {λ1, λ2, λ3, λ4}]
 titrationPrinter[inputFile, {λ1, λ2, λ3, λ4}, options]
 ```
 
-Options: `"tab"`, `"minlambda"`, `"maxlambda"`, `"maxeq"`, `"output"`.
+Options: `"tab"`, `"minlambda"` (default: `Automatic`), `"maxlambda"` (default: `Automatic`), `"maxeq"`, `"output"`, `"spectroscopy"` (default: `"UVVis"`). When set to `Automatic`, the wavelength boundaries are determined from the dataset.
 
 #### `spectraExplorer`
 
@@ -131,4 +138,4 @@ This project is open-source under the [Apache 2.0 License](LICENSE).
 
 ## How to cite
 
-If you use titrationTools in your research, please cite this repository (see `citation.cff` or the "Cite this repository" button on GitHub). A Zenodo DOI is available for each versioned release.
+If you use titrationTools in your research, please cite this repository (see `citation.cff` or the "Cite this repository" button on GitHub). A Zenodo DOI pointing to the most recent version is available.
