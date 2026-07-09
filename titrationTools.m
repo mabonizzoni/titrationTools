@@ -37,10 +37,9 @@ The default behavior can be modified by specifying the following options as 'opt
 | --- | --- | --- |
 | 'tab' | 'dilution corrected' | from which tab data should be loaded in the input$ Excel file |
 | 'maxeq' | All | up to how many equivalents to plot the titration profiles |
-
 Alternatively, titrationExplorer supports an Association-based configuration signature for advanced setups:
-titrationExplorer[<| \"FileName\" -> \"path.xlsx\", \"Tab\" -> \"tab\", \"MaxX\" -> All, \"SpectroscopyType\" -> \"UVVis\" |>]
-This signature automatically adapts to present dual X-axes if both equivalents and concentration lines are found in the data, and configures axis labeling according to the selected SpectroscopyType (\"UVVis\" or \"Fluorescence\")."]
+titrationExplorer[<| \"FileName\" -> \"path.xlsx\", \"Tab\" -> \"tab\", \"MaxX\" -> All, \"DataType\" -> Automatic |>]
+This signature automatically adapts to present dual X-axes if both equivalents and concentration lines are found in the data."]
 
 GeneralUtilities`SetUsage[titrationPrinter,"titrationPrinter[input$, {lambda$1, $$, lambda$4}] imports the Excel worksheet input$ that contains titration data and produces five plots, formatted in a grid: a line plot of the stack of spectra and four titration profiles as scatter plots, each at wavelength lambda$i.
 
@@ -51,6 +50,7 @@ The default behavior can be modified by specifying the following options as 'opt
 | 'minlambda' | 260 | lower limit of the wavelength range for the stack of spectra plot |
 | 'maxlambda' | 600 | upper limit of the wavelength range for the stack of spectra plot |
 | 'maxeq' | All | up to how many equivalents to plot the titration profiles |
+| 'DataType' | Automatic | infers y-axis labels based on data range, or accepts a custom label string |
 | 'output' | Automatic | by default the plot grid is output to the screen; see other options below |
 The \!\(\*StyleBox[\"output options\",FontWeight->\"Bold\"]\) are as follows:
 | 'output' -> Automatic | shows output on screen |
@@ -103,7 +103,7 @@ Begin["`Private`"]
 
 (* Legacy call signature: currently just pepacks positional arguments and choices into an Association and forwards to the new implementation *)
 Options[titrationExplorer]={"tab"->"dilution corrected","maxeq"->All};
-titrationExplorer[fileName_String,opts:OptionsPattern[]]:=titrationExplorer[<|"FileName"->fileName,"Tab"->OptionValue["tab"],"MaxX"->OptionValue["maxeq"],"spectroscopy"->"UVVis"|>];
+titrationExplorer[fileName_String,opts:OptionsPattern[]]:=titrationExplorer[<|"FileName"->fileName,"Tab"->OptionValue["tab"],"MaxX"->OptionValue["maxeq"],"DataType"->Automatic|>];
 
 (* New signature: *)
 titrationExplorer[config_Association]:=
@@ -113,14 +113,14 @@ all,equivalents,concentrations,xValues,
 wavelengths,spectra,profiles,
 selectedWavelength,min,max,wlPos,
 hasEq,hasConc,kFactor,topTicks,bottomLabel,topLabel,yLabel,yProfileLabel,
-fileName,tab,maxX,specType
+fileName,tab,maxX,dataType,maxDataValue
 },
 
 (* Extract parameters from configuration association with robust defaults *)
 fileName=Lookup[config,"FileName"];
 tab=Lookup[config,"Tab","dilution corrected"];
 maxX=Lookup[config,"MaxX",All];
-specType=Lookup[config,"spectroscopy","UVVis"];
+dataType=Lookup[config,"DataType",Automatic];
 
 all=Import[fileName,{"Sheets",tab}];
 
@@ -148,7 +148,7 @@ xValues=equivalents;
 bottomLabel="Equivalents";
 topLabel="Titrant concentration";
 kFactor=If[Max[equivalents]>0,Max[concentrations]/Max[equivalents],1];
-topTicks=Charting`ScaledTicks["Linear",{#*kFactor&,#/kFactor&},"Nice"],
+topTicks=Charting`ScaledTicks["Linear",{#/kFactor&,#*kFactor&},"Nice",TicksLength->{0.025,0.01}],
 
 hasConc,
 xValues=concentrations;
@@ -163,11 +163,20 @@ topLabel="";
 topTicks=None
 ];
 
-(* Y-axis is labeled based on spectroscopy type *)
+(* Y-axis is labeled based on spectroscopy type: *)
+(* Precompute the maximum numeric value in the data table to gauge the scale of the dataset *)
+maxDataValue=Max[Cases[all[[First@wlPos+1;;,2;;]],_?NumericQ,Infinity]];
+(* Absorbance measurements rarely exceed values of 2-3, whereas intensity measurements routinely are > 10^3 *)
+
 If[
-ToLowerCase[specType]==="fluorescence",
-yLabel="emission intensity / a.u.";yProfileLabel="Int @ ",
-yLabel="corrected absorbance / a.u.";yProfileLabel="Abs @ "
+dataType===Automatic,
+(* AUTOMATIC MODE: Infer labels from data magnitude *)
+If[maxDataValue>3,
+yLabel="Emission intensity / counts";yProfileLabel="Intensity @ ",
+yLabel="Absorbance / a.u.";yProfileLabel="Abs @ "
+],
+(* CUSTOM MODE: Directly use the user's input for both labels*)
+yLabel=ToString[dataType];yProfileLabel=yLabel<>" @ "
 ];
 
 Grid[{
@@ -182,9 +191,9 @@ Dynamic@ListLinePlot[
 spectra,
 PlotStyle->Directive[Black,Thin],
 PlotRange->{{min,max},All},PlotRangePadding->{None,{0.05,Automatic}},
-ImagePadding->{{50,15},{45,10}},
+(*ImagePadding->{{50,15},{45,10}},*)
 AspectRatio->1,ImageSize->Scaled[1/4],
-Frame->True,Axes->False,FrameStyle->Directive[Black,14],FrameLabel->{{"wavelength / nm",None},{yLabel,None}},
+Frame->True,Axes->False,FrameStyle->Directive[Black,14],FrameLabel->{{yLabel,None},{"wavelength / nm",None}},
 PlotHighlighting->None,
 Epilog->{Red,Thick,InfiniteLine[{Dynamic@selectedWavelength,0},{0,1}]}
 ],
@@ -195,10 +204,10 @@ Dynamic@ListPlot[
 Transpose@{xValues,profiles[[Key[selectedWavelength]]]},
 PlotStyle->Black,
 PlotRange->{{0,maxX},All},PlotRangePadding->{Scaled[0.05],Automatic},
-ImagePadding->{{65,10},{45,25}},
+(*ImagePadding->{{65,10},{45,25}},*)
 AspectRatio->1,ImageSize->Scaled[1/4],
 Frame->True,Axes->False,FrameStyle->Directive[Black,14],
-FrameLabel->{{Style[yProfileLabel<>ToString[selectedWavelength]<>" nm",18],None},{Style[bottomLabel,18],Style[topLabel,18]}},
+FrameLabel->{{yProfileLabel<>ToString[selectedWavelength]<>" nm",None},{bottomLabel,topLabel}},
 FrameTicks->{{Automatic,None},{Automatic,topTicks}},
 PlotHighlighting->{"XNearestPoint","XLabel","XYDroplines"}]
 }
@@ -215,7 +224,7 @@ PlotHighlighting->{"XNearestPoint","XLabel","XYDroplines"}]
 (* user-selected wavelengths. Selects x-labels as equivalents or concentrations based on row availability in the input   *)
 (* and adjusts titles accordingly.                                                                                        *)
 
-Options[titrationPrinter]={"tab"->"dilution corrected","maxeq"->All,"minlambda"->Automatic,"maxlambda"->Automatic,"output"->Automatic,"spectroscopy"->"UVVis"};
+Options[titrationPrinter]={"tab"->"dilution corrected","maxeq"->All,"minlambda"->Automatic,"maxlambda"->Automatic,"output"->Automatic,"DataType"->Automatic};
 titrationPrinter::filenotfound="The indicated file could not be found.";
 titrationPrinter::listlength="Exactly four wavelengths should be specified for profile plotting. You specified `1` instead.";
 titrationPrinter::WLnotfound="Some of the profile wavelengths requested `1` were not found in the input file.";
@@ -251,8 +260,13 @@ hasEq=Length[equivalents]>0;
 xValues=If[hasEq,equivalents,concentrations];
 xLabel=If[hasEq,"    equivalents","    concentrations"];
 
-(*Toggle Y-axis label text*)
-yLabel=If[ToLowerCase[OptionValue["spectroscopy"]]==="fluorescence","Emission intensity","Dilution-corrected absorbance"];
+(* If the data type selection has been left Automatic, then inspect the data to figure out whether it represents absorbance or fluorescence intensity readings *)
+(* Otherwise, use the user-provided DataType option string as a yLabel *)
+yLabel=OptionValue["DataType"];
+If[
+yLabel===Automatic,
+yLabel=If[Max[Cases[all[[First@wlPos+1;;,2;;]],_?NumericQ,Infinity]]>3,"Emission intensity","Absorbance"]
+];
 
 (* Check that the speficied wavelengths are actually among those available for plotting *)
 If[
