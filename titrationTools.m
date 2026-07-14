@@ -37,9 +37,8 @@ The default behavior can be modified by specifying the following options as 'opt
 | --- | --- | --- |
 | 'tab' | 'dilution corrected' | from which tab data should be loaded in the input$ Excel file |
 | 'maxeq' | All | up to how many equivalents to plot the titration profiles |
-Alternatively, titrationExplorer supports an Association-based configuration signature for advanced setups:
-titrationExplorer[<| \"FileName\" -> \"path.xlsx\", \"Tab\" -> \"tab\", \"MaxX\" -> All, \"DataType\" -> Automatic |>]
-This signature automatically adapts to present dual X-axes if both equivalents and concentration lines are found in the data."]
+| 'datatype' | Automatic | data type in input file (also used for vertical axis labels) |
+The function looks for a row starting with equivalents or concentrations in the Excel worksheet. If both are present, a dual-axis profile plot is generated."]
 
 GeneralUtilities`SetUsage[titrationPrinter,"titrationPrinter[input$, {lambda$1, $$, lambda$4}] imports the Excel worksheet input$ that contains titration data and produces five plots, formatted in a grid: a line plot of the stack of spectra and four titration profiles as scatter plots, each at wavelength lambda$i.
 
@@ -50,7 +49,7 @@ The default behavior can be modified by specifying the following options as 'opt
 | 'minlambda' | 260 | lower limit of the wavelength range for the stack of spectra plot |
 | 'maxlambda' | 600 | upper limit of the wavelength range for the stack of spectra plot |
 | 'maxeq' | All | up to how many equivalents to plot the titration profiles |
-| 'DataType' | Automatic | infers y-axis labels based on data range, or accepts a custom label string |
+| 'datatype' | Automatic | infers y-axis labels based on data range, or accepts a custom label string |
 | 'output' | Automatic | by default the plot grid is output to the screen; see other options below |
 The \!\(\*StyleBox[\"output options\",FontWeight->\"Bold\"]\) are as follows:
 | 'output' -> Automatic | shows output on screen |
@@ -74,7 +73,7 @@ waterfallPlot[data$, howMany$, colors$, opt$ -> val$, $$] applies additional opt
 
 | Argument | Description |
 | --- | --- |
-| data$ | A 2D numeric array. Row 1 ignored. Column 1 = wavelengths. Other columns = one spectrum each. |
+| data$ | A 2D numeric array or a file name. In the array, row 1 ignored; column 1 = wavelengths. Other columns = one spectrum each. |
 | howMany$ | Integer. Approximately how many spectra to display by uniform subsampling, omit to display all. Displayed spectra retain their original positions. |
 | colors$ | A single color or a list of color directives. Single color = uniform filling. Color list = gradient filling from first to last spectrum. Default: {Blue, Red}. |
 
@@ -82,12 +81,61 @@ waterfallPlot[data$, howMany$, colors$, opt$ -> val$, $$] applies additional opt
 | --- | --- | --- |
 | PlotRange | {Full, Full, Full} | Plot range for {wavelengths$, spectrumIndex$, absorbance$}. Each can be Full, All, or an explicit {min$, max$} interval. |
 | BoxRatios | {1, 4, 1} | Sets the relative lengths of the bounding box edges ({wavelengths$, spectrumIndex$, absorbance$}). |
+| 'tab' | 'dilution corrected' | from which tab data should be loaded in an input$ Excel file |
 
 Any option valid for ListLinePlot3D may also be supplied. Axis labels are intentionally omitted. Add them in post-processing."]
 
 
-(*private section:implementation code*)
+(* Private section: implementation code *)
 Begin["`Private`"]
+
+(*Shared default: the tab name used across all three explorer functions when the caller doesn't specify one*)
+defaultTab="dilution corrected";
+
+(* Helper function to import and parse input data file *)
+ClearAll[iParseTitrationSheet]
+iParseTitrationSheet[fileName_String,tab_String,callingFunction_:None]:=Module[
+{availableSheets,all,equivalents,concentrations,hasEq,hasConc,wavelengths,spectra,profiles,wlPos},
+
+If[FileExistsQ[fileName]=!=True,Message[MessageName[callingFunction,"filenotfound"]];Abort[]];
+
+availableSheets=Import[fileName,"Sheets"];
+If[!MemberQ[availableSheets,tab],Message[MessageName[callingFunction,"notab"],tab,availableSheets];Abort[]];
+
+(* Clean Excel import in case the Excel sheet has empty cells that used to contain stuff and are not considered empty upon import: *)
+(* In the Replace expression, level {1} applies the rules strictly to entire rows only.*)
+(* 1. Whole rows of empty strings ("") are deleted using Nothing. *)
+(* 2. Rows containing data have only trailing empty cells trimmed, leaving any empty cells in between data intact, so preserving the data structure .*)
+all=Import[fileName,{"Sheets",tab}];
+all=Replace[all,{{""...}->Nothing,{data___,""...}:>{data}},{1}];
+
+(* Extract equivalents list or concentration list or both from the data set *)
+(* Abort if both are missing *)
+equivalents=Flatten@Cases[all,{row_String,eq___}/;StringMatchQ[row,"equivalent"|"equivalents",IgnoreCase->True]:>{eq}];
+hasEq=Length[equivalents]>0;
+concentrations=Flatten@Cases[all,{row_String,conc___}/;StringMatchQ[row,"concentration"|"concentrations",IgnoreCase->True]:>{conc}];
+hasConc=Length[concentrations]>0;
+If[!hasEq&&!hasConc,Message[MessageName[callingFunction,"noxaxis"]];Abort[]];
+
+wlPos=FirstPosition[all,_String?(StringMatchQ[#,"wavelength"|"wavelengths",IgnoreCase->True]&)];
+If[wlPos===Missing["NotFound"],Message[MessageName[callingFunction,"nowavelength"]];Abort[]];
+(* Extract just the row number from the {row, col} coordinate list returned by FirstPosition *)
+wlPos=First[wlPos];
+wavelengths=Round@all[[wlPos+1;;,1]];
+
+spectra=Map[Transpose[{wavelengths,#}]&,Transpose@all[[wlPos+1;;,2;;]]];
+profiles=GroupBy[all[[wlPos+1;;]],(ToString[Round[First[#]]]&)->Rest,Flatten];
+
+<|
+"Wavelengths"->wavelengths,
+"Spectra"->spectra,
+"Profiles"->profiles,
+"HasEquivalents"->hasEq,
+"Equivalents"->equivalents,
+"HasConcentrations"->hasConc,
+"Concentrations"->concentrations
+|>
+]
 
 
 (* =================*)
@@ -101,75 +149,63 @@ Begin["`Private`"]
 (* and fluorescence labels, and maps dual-axes (equivalents & concentration)*)
 (* when both are present. *)
 
-(* Legacy call signature: currently just pepacks positional arguments and choices into an Association and forwards to the new implementation *)
-Options[titrationExplorer]={"tab"->"dilution corrected","maxeq"->All};
-titrationExplorer[fileName_String,opts:OptionsPattern[]]:=titrationExplorer[<|"FileName"->fileName,"Tab"->OptionValue["tab"],"MaxX"->OptionValue["maxeq"],"DataType"->Automatic|>];
+Options[titrationExplorer]={"tab"->defaultTab,"maxeq"->All,"datatype"->Automatic};
+titrationExplorer::filenotfound="The indicated file could not be found.";
+titrationExplorer::notab="The tab \"`1`\" was not found in the input file. Available tabs are: `2`.";
+titrationExplorer::nowavelength="No \"wavelength\" row was found in the imported data.";
+titrationExplorer::noxaxis="Neither an \"equivalents\" nor a \"concentrations\" row was found in the imported data; cannot determine an x-axis for the titration profile.";
 
-(* New signature: *)
-titrationExplorer[config_Association]:=
+titrationExplorer[fileName_String,opts:OptionsPattern[]]:=
 DynamicModule[
-{
-all,equivalents,concentrations,xValues,
-wavelengths,spectra,profiles,
-selectedWavelength,min,max,wlPos,
-hasEq,hasConc,kFactor,topTicks,bottomLabel,topLabel,yLabel,yProfileLabel,
-fileName,tab,maxX,dataType,maxDataValue
-},
+{parsed,equivalents,concentrations,xValues,wavelengths,wlPitch,spectra,profiles,
+selectedWavelength,min,max,wlPos,hasEq,hasConc,kFactor,
+topTicks,bottomLabel,topLabel,yLabel,yProfileLabel,
+maxX,dataType,maxDataValue},
 
-(* Extract parameters from configuration association with robust defaults *)
-fileName=Lookup[config,"FileName"];
-tab=Lookup[config,"Tab","dilution corrected"];
-maxX=Lookup[config,"MaxX",All];
-dataType=Lookup[config,"DataType",Automatic];
+parsed=iParseTitrationSheet[fileName,OptionValue["tab"]];
 
-all=Import[fileName,{"Sheets",tab}];
+(* Extract data components from the Association returned by the parser *)
+wavelengths=parsed["Wavelengths"];
+spectra=parsed["Spectra"];
+profiles=parsed["Profiles"];
+hasEq=parsed["HasEquivalents"];
+equivalents=parsed["Equivalents"];
+hasConc=parsed["HasConcentrations"];
+concentrations=parsed["Concentrations"];
 
-(* Case-insensitive matching for row extractions *)
-equivalents=Flatten@Cases[all,{row_?StringQ/;ToLowerCase[row]==="equivalents",eq___}:>{eq}];
-concentrations=Flatten@Cases[all,{row_?StringQ/;ToLowerCase[row]==="concentrations",conc___}:>{conc}];
-wlPos=FirstPosition[all,row_?StringQ/;ToLowerCase[row]==="wavelength"];
+(* Calculate wavelength pitch from dataset *)
+wlPitch=Abs[wavelengths[[2]]-wavelengths[[1]]];
 
-wavelengths=Round@all[[First@wlPos+1;;,1]];
+(* Fallbacks for configuration variables *)
+maxX=Lookup[parsed,"MaxX",All];
+dataType=Lookup[parsed,"DataType",Automatic];
 
 (* Safeguard initial wavelength selection range *)
 selectedWavelength=370;
 If[!MemberQ[wavelengths,selectedWavelength],selectedWavelength=wavelengths[[Floor[Length[wavelengths]/2]]]];
 
-spectra=Map[Transpose[{wavelengths,#}]&,Transpose@all[[First@wlPos+1;;,2;;]]];
-profiles=GroupBy[all[[First@wlPos+1;;]],Round@*First->Rest,Flatten];
-
-(* Determine data presence & scaling *)
-hasEq=Length[equivalents]>0;
-hasConc=Length[concentrations]>0;
-
+(*3. Determine horizontal axis presence & scaling using boolean flags in returned data association *)
 Which[
 hasEq&&hasConc,
 xValues=equivalents;
-bottomLabel="Equivalents";
-topLabel="Titrant concentration";
+bottomLabel="Equivalents";topLabel="Titrant concentration";
 kFactor=If[Max[equivalents]>0,Max[concentrations]/Max[equivalents],1];
 topTicks=Charting`ScaledTicks["Linear",{#/kFactor&,#*kFactor&},"Nice",TicksLength->{0.025,0.01}],
 
 hasConc,
 xValues=concentrations;
-bottomLabel="Titrant concentration";
-topLabel="";
+bottomLabel="Titrant concentration";topLabel="";
 topTicks=None,
 
 True,
-xValues=equivalents;
-bottomLabel="Equivalents";
-topLabel="";
-topTicks=None
+xValues=equivalents;bottomLabel="Equivalents";topLabel="";topTicks=None
 ];
 
 (* Y-axis is labeled based on spectroscopy type: *)
 (* Precompute the maximum numeric value in the data table to gauge the scale of the dataset *)
-maxDataValue=Max[Cases[all[[First@wlPos+1;;,2;;]],_?NumericQ,Infinity]];
 (* Absorbance measurements rarely exceed values of 2-3, whereas intensity measurements routinely are > 10^3 *)
-
-If[
-dataType===Automatic,
+maxDataValue=Max[Cases[spectra,_?NumericQ,Infinity]];
+If[dataType===Automatic,
 (* AUTOMATIC MODE: Infer labels from data magnitude *)
 If[maxDataValue>3,
 yLabel="Emission intensity / counts";yProfileLabel="Intensity @ ",
@@ -182,8 +218,8 @@ yLabel=ToString[dataType];yProfileLabel=yLabel<>" @ "
 Grid[{
 {
 Item["Plot range:",Alignment->{Left,Scaled[1/2]}],
-Control[{{min,Min@wavelengths,""},Min@wavelengths,Dynamic[max-2],2,ControlType->Slider,Appearance->"Labeled",BaseStyle->FontSize->18}],
-Control[{{max,Max@wavelengths,""},Dynamic[min+2],Max@wavelengths,2,ControlType->Slider,Appearance->"Labeled",BaseStyle->FontSize->18}]
+Control[{{min,Min@wavelengths,""},Min@wavelengths,Dynamic[max-2wlPitch],wlPitch,ControlType->Slider,Appearance->"Labeled",BaseStyle->FontSize->18}],
+Control[{{max,Max@wavelengths,""},Dynamic[min+2wlPitch],Max@wavelengths,wlPitch,ControlType->Slider,Appearance->"Labeled",BaseStyle->FontSize->18}]
 },
 {
 EventHandler[
@@ -191,27 +227,28 @@ Dynamic@ListLinePlot[
 spectra,
 PlotStyle->Directive[Black,Thin],
 PlotRange->{{min,max},All},PlotRangePadding->{None,{0.05,Automatic}},
-(*ImagePadding->{{50,15},{45,10}},*)
 AspectRatio->1,ImageSize->Scaled[1/4],
 Frame->True,Axes->False,FrameStyle->Directive[Black,14],FrameLabel->{{yLabel,None},{"wavelength / nm",None}},
 PlotHighlighting->None,
 Epilog->{Red,Thick,InfiniteLine[{Dynamic@selectedWavelength,0},{0,1}]}
 ],
-"MouseDragged":>(selectedWavelength=Round[First[MousePosition["Graphics"]],2])
+(* the Clip in the wavelength selection below prevents crashes if the line is dragged too far left or right *)
+"MouseDragged":>(selectedWavelength=Clip[Round[First[MousePosition["Graphics"]],wlPitch],{Min[wavelengths],Max[wavelengths]}])
 ],
 SpanFromLeft,
 Dynamic@ListPlot[
-Transpose@{xValues,profiles[[Key[selectedWavelength]]]},
+Transpose@{xValues,profiles[ToString@selectedWavelength]},
 PlotStyle->Black,
 PlotRange->{{0,maxX},All},PlotRangePadding->{Scaled[0.05],Automatic},
-(*ImagePadding->{{65,10},{45,25}},*)
 AspectRatio->1,ImageSize->Scaled[1/4],
 Frame->True,Axes->False,FrameStyle->Directive[Black,14],
 FrameLabel->{{yProfileLabel<>ToString[selectedWavelength]<>" nm",None},{bottomLabel,topLabel}},
 FrameTicks->{{Automatic,None},{Automatic,topTicks}},
-PlotHighlighting->{"XNearestPoint","XLabel","XYDroplines"}]
+PlotHighlighting->{"XNearestPoint","XLabel","XYDroplines"}
+]
 }
-},Frame->All
+},
+Frame->All
 ](*end Grid*)
 ]
 
@@ -224,65 +261,61 @@ PlotHighlighting->{"XNearestPoint","XLabel","XYDroplines"}]
 (* user-selected wavelengths. Selects x-labels as equivalents or concentrations based on row availability in the input   *)
 (* and adjusts titles accordingly.                                                                                        *)
 
-Options[titrationPrinter]={"tab"->"dilution corrected","maxeq"->All,"minlambda"->Automatic,"maxlambda"->Automatic,"output"->Automatic,"DataType"->Automatic};
+Options[titrationPrinter]={"tab"->defaultTab,"maxeq"->All,"minlambda"->Automatic,"maxlambda"->Automatic,"output"->Automatic,"datatype"->Automatic};
+
 titrationPrinter::filenotfound="The indicated file could not be found.";
+titrationPrinter::notab="The tab \"`1`\" was not found in the input file. Available tabs are: `2`.";
+titrationPrinter::nowavelength="No \"wavelength\" row was found in the imported data.";
+titrationPrinter::noxaxis="Neither an \"equivalents\" nor a \"concentrations\" row was found in the imported data; cannot determine an x-axis for the titration profile.";
 titrationPrinter::listlength="Exactly four wavelengths should be specified for profile plotting. You specified `1` instead.";
 titrationPrinter::WLnotfound="Some of the profile wavelengths requested `1` were not found in the input file.";
 
 titrationPrinter[fileName_String,profilePos_?(VectorQ[#,NumberQ]&),OptionsPattern[]]:=
 Module[
-{all,equivalents,concentrations,wavelengths,spectralData,spectraPlot,profilesData,
-profilePlotter,min,max,
-profilePositions=Round[profilePos,2],
+{parsed,equivalents,concentrations,wavelengths,wlPitch,
+spectralData,spectraPlot,
+profilesData,profilePlotter,profilePositions,
+min,max,xValues,hasEq,xLabel,yLabel,
 profile1,profile2,profile3,profile4,
-gridOutput,xValues,wlPos,hasEq,xLabel,yLabel},
+gridOutput},
 
-(* Check that the named input file exists and that the right number of wavelengths was specified *)
-If[FileExistsQ[fileName]=!=True,Message[titrationPrinter::filenotfound];Abort[]];
+(*Check that the right number of wavelengths was specified*)
 If[Length[profilePos]!=4,Message[titrationPrinter::listlength,Length[profilePos]];Abort[]];
 
-all=Import[fileName,{"Sheets",OptionValue["tab"]}];
+(* Use helper function to ingest data from input file *)
+parsed=iParseTitrationSheet[fileName,OptionValue["tab"]];
 
-(* Case-insensitive exact string header matching *)
-equivalents=Flatten@Cases[all,{row_?StringQ/;ToLowerCase[row]==="equivalents",eq___}:>{eq}];
-concentrations=Flatten@Cases[all,{row_?StringQ/;ToLowerCase[row]==="concentrations",conc___}:>{conc}];
-wlPos=FirstPosition[all,row_?StringQ/;ToLowerCase[row]==="wavelength"];
-wavelengths=Round@all[[First@wlPos+1;;,1]];
+(* Assign structured data to variables *)
+spectralData=parsed["Spectra"];
+profilesData=parsed["Profiles"];
+hasEq=parsed["HasEquivalents"];
+equivalents=parsed["Equivalents"];
+concentrations=parsed["Concentrations"];
 
-(*Resolve dynamic wavelength range boundaries*)
-min=OptionValue["minlambda"];
-max=OptionValue["maxlambda"];
-If[min===Automatic,min=Min[wavelengths]];
-If[max===Automatic,max=Max[wavelengths]];
+(* Calculate wavelength pitch from data set and set profile wavelength selections *)
+wavelengths=parsed["Wavelengths"];
+wlPitch=Abs[wavelengths[[2]]-wavelengths[[1]]];
+profilePositions=Round[profilePos,wlPitch];
 
-(* Select axis behavior based on dataset presence *)
-hasEq=Length[equivalents]>0;
-xValues=If[hasEq,equivalents,concentrations];
-xLabel=If[hasEq,"    equivalents","    concentrations"];
-
-(* If the data type selection has been left Automatic, then inspect the data to figure out whether it represents absorbance or fluorescence intensity readings *)
-(* Otherwise, use the user-provided DataType option string as a yLabel *)
-yLabel=OptionValue["DataType"];
-If[
-yLabel===Automatic,
-yLabel=If[Max[Cases[all[[First@wlPos+1;;,2;;]],_?NumericQ,Infinity]]>3,"Emission intensity","Absorbance"]
-];
-
-(* Check that the speficied wavelengths are actually among those available for plotting *)
+(* Check that the specified profile wavelengths are actually available*)
 If[
 ContainsAll[wavelengths,profilePositions]=!=True,
 Message[titrationPrinter::WLnotfound,StringReplace[ToString[Complement[profilePositions,wavelengths]],{"{"->"(","}"->")"}]];Abort[]
 ];
 
-spectralData=Map[
-Transpose[{wavelengths,#}]&,
-Transpose@all[[First@wlPos+1;;,2;;]]
-];
-profilesData=GroupBy[
-all[[First@wlPos+1;;]],
-Round@*First->Rest,
-Flatten
-];
+(* Impose wavelength ranges *)
+min=OptionValue["minlambda"];
+max=OptionValue["maxlambda"];
+If[min===Automatic,min=Min[wavelengths]];
+If[max===Automatic,max=Max[wavelengths]];
+
+(* Horizontal axis labeling *)
+xValues=If[hasEq,equivalents,concentrations];
+xLabel=If[hasEq,"    equivalents","    concentrations"];
+
+(* Vertical axis labeling *)
+yLabel=OptionValue["datatype"];
+If[yLabel===Automatic,yLabel=If[Max[Cases[spectralData,_?NumericQ,Infinity]]>3,"Emission intensity","Absorbance"]];
 
 spectraPlot=
 ListLinePlot[
@@ -297,7 +330,7 @@ PlotHighlighting->None,Background->None
 
 profilePlotter=
 ListPlot[
-Transpose[{xValues,profilesData[#]}],
+Transpose[{xValues,profilesData[ToString@#]}],
 PlotStyle->Directive[Black,PointSize->0.02],
 PlotRange->{{0,OptionValue["maxeq"]},All},PlotRangePadding->{Scaled[0.05],Automatic},
 Frame->True,Axes->False,FrameStyle->Directive[Black,11],
@@ -341,17 +374,39 @@ iPrinter[grid_Grid,{format_String,outputFileName_String,options:OptionsPattern[E
 (* =============== *)
 (* Generates an interactive frame animation player (using ListAnimate)                *)
 (* to flip through individual spectra sequentially as a function of titrant additions. *)
-Options[spectraExplorer]={"tab"->"dilution corrected",PlotRange->{{260,800},{-0.05,1.4}}};
+
+Options[spectraExplorer]={"tab"->defaultTab,PlotRange->{Full,All},"datatype"->Automatic};
+spectraExplorer::filenotfound="The indicated file could not be found.";
+spectraExplorer::notab="The tab \"`1`\" was not found in the input file. Available tabs are: `2`.";
+spectraExplorer::nowavelength="No \"wavelength\" row was found in the imported data.";
+spectraExplorer::noxaxis="Neither an \"equivalents\" nor a \"concentrations\" row was found in the imported data; cannot determine an x-axis for the spectra animation.";
+
 spectraExplorer[fileName_String,OptionsPattern[]]:=
 Module[
-{frames,all,equivalents,wavelengths,spectra,profiles},
+{parsed,frames,equivalents,concentrations,yLabel,wavelengths,spectra,hasEq,xValues,xLabelPrefix},
 
-all=Import[fileName,{"Sheets",OptionValue["tab"]}];
-equivalents=Cases[all,{"equivalents",eq__}:>eq];
-wavelengths=Round@all[[First@FirstPosition[all,"Wavelength"]+1;;,1]];
-spectra=Map[
-(* form {wavelength, absorbance} pairs for each spectrum --> *)Transpose[{wavelengths,#}]&,
-Transpose@ (* spectral values --> *)all[[First@FirstPosition[all,"Wavelength"]+1;;,2;;]]
+(* Use helper function to ingest data from input file *)
+parsed=iParseTitrationSheet[fileName,OptionValue["tab"],spectraExplorer];
+wavelengths=parsed["Wavelengths"];
+spectra=parsed["Spectra"];
+hasEq=parsed["HasEquivalents"];
+equivalents=parsed["Equivalents"];
+concentrations=parsed["Concentrations"];
+
+(* Independent-variable label type for text on each frame *)
+If[
+hasEq,
+xValues=equivalents;xLabelPrefix="equiv = ",
+xValues=concentrations;xLabelPrefix="conc = "
+];
+
+(* Vertical axis labeling *)
+(* If DataType = Automatic, then figure out whether it represents absorbance or fluorescence intensity readings *)
+(* Otherwise, use the user-provided DataType option string as a yLabel *)
+yLabel=OptionValue["datatype"];
+If[
+yLabel===Automatic,
+yLabel=If[Max[Cases[spectra,_?NumericQ,Infinity]]>3,"Intensity / counts","Absorbance / a.u."]
 ];
 
 frames=MapThread[
@@ -361,7 +416,7 @@ PlotStyle->Black,
 PlotRange->OptionValue[PlotRange],
 AspectRatio->0.5,ImageSize->Full,
 Frame->True,Axes->False,FrameStyle->Directive[Black,14],
-FrameLabel->(Style[#,18]&/@{"wavelength / nm","corr. Abs / a.u."}),
+FrameLabel->(Style[#,18]&/@{"wavelength / nm",yLabel}),
 Epilog->Inset[Style["equiv = "<>ToString@#2,18,Red],Scaled[{0.97,0.97}],Scaled[{1,1}]]
 ]&,
 {spectra,NumberForm[#,{Infinity,2}]&/@equivalents}
@@ -379,6 +434,7 @@ ListAnimate[frames,AnimationRunning->False,ImageSize->Scaled[1/3]]
 (* and uses color blending to paint individual ribbons under each wavelength line.   *)
 
 Options[waterfallPlot]={
+"tab"->defaultTab,
 PlotRange->{Full,Full,Full},
 PlotRangePadding->{
 0(*x axis (wavelengths): no padding*),
@@ -390,65 +446,99 @@ BoxRatios->{1,4,1},
 ImageSize->Scaled[1/3],
 AxesLabel->None
 };
+waterfallPlot::filenotfound="The indicated file could not be found.";
+waterfallPlot::notab="The tab \"`1`\" was not found in the input file. Available tabs are: `2`.";
 
+(* New signature: accepts a file name string, parses it, and forwards to the main function *)
 waterfallPlot[
-data_?(ArrayQ[#,2]&),
-Optional[howMany_Integer?(#>1&),All],(*if specified, check that howMany is at least 2. Values of 1 or 0 are nonsensical and would also cause code to fail.*)
+fileName_String,
+howMany:(_Integer?(#>1&)|All):All,
+Optional[colors_?(Or[ColorQ[#],VectorQ[#,ColorQ]]&),{Blue,Red}],
+options:OptionsPattern[{waterfallPlot,ListLinePlot3D}]
+]:=waterfallPlot[iParseTitrationSheet[fileName,OptionValue["tab"],waterfallPlot],howMany,colors,options]
+
+(*Signature 2: Accepts a raw 2D numeric data matrix directly *)
+waterfallPlot[
+matrix_?(ArrayQ[#,2]&),
+howMany:(_Integer?(#>1&)|All):All,
+colors:_?(Or[ColorQ[#],VectorQ[#,ColorQ]]&):{Blue,Red},
+options:OptionsPattern[{waterfallPlot,ListLinePlot3D}]
+]:=Module[
+{indexRowQ,startRow,rawSpectra,wavelengths,structuredSpectra,package},
+
+(* Helper function to check whether the first row in the dataset is a sample index. *)indexRowQ[row_]:=With[{nums=Cases[row[[2;;]],_?NumericQ]},VectorQ[nums,NumericQ]&&Max@Abs[nums-Range@Length@nums]<0.5];
+
+(* Skip the first row if it is a sample index row,otherwise keep it. *)
+startRow=If[indexRowQ[matrix[[1]]],2,1];
+rawSpectra=Transpose[matrix[[startRow;;,2;;]]];
+wavelengths=Round@matrix[[startRow;;,1]];
+
+(* Shape the raw data into coordinate tracks to match your new Association format *)
+structuredSpectra=Map[Transpose[{wavelengths,#}]&,rawSpectra];
+
+(* Package into the standard framework Association structure *)
+package=<|
+"Wavelengths"->wavelengths,
+"Spectra"->structuredSpectra,
+"HasEquivalents"->False,"Equivalents"->{},
+"HasConcentrations"->False,"Concentrations"->{}
+|>;
+
+(* Forward to the primary signature *)
+waterfallPlot[package,howMany,colors,options]
+];
+
+(* Primary signature: accepts an Association structure *)
+waterfallPlot[
+data_Association,
+howMany:(_Integer?(#>1&)|All):All,(*if specified, check that howMany is at least 2. Values of 1 or 0 are nonsensical and would also cause code to fail. *)
 Optional[colors_?(Or[ColorQ[#](*a single color*),VectorQ[#,ColorQ](*a list of colors*)]&),{Blue,Red}],
 options:OptionsPattern[{waterfallPlot,ListLinePlot3D}]
 ]:=Module[
-{indexRowQ,startRow,spectra,wavelengths,every,colorList},
+{spectra,wavelengths,every,colorList,sampleCount},
+(*Extract clean,pre-parsed data from the Association keys*)
+wavelengths=data["Wavelengths"];
 
-(*Helper function to check whether the first row in the data set is a sample index.*)
-(*Function compares the numeric entries against {1, 2, 3, ...}. A tolerance of 0.5 accommodates float imprecision on import.*)(*Absorbance values would differ from a sequential integer counter by far more than 0.5.*)
-(*The Cases expression retains only numbers, in case some empty cells are also imported as strings*)
-indexRowQ[row_]:=With[{nums=Cases[row[[2;;]],_?NumericQ]},VectorQ[nums,NumericQ]&&Max@Abs[nums-Range@Length@nums]<0.5];
+(* Since data["Spectra"] contains explicit coordinate pairs like {{wl, int}, ... },*)(* we use Map[Last, ..., {2}] to isolate just the intensity values. This yields a 2D matrix of height values for ListLinePlot3D *)
+spectra=Map[Last,data["Spectra"],{2}];
+sampleCount=Length[spectra];
 
-(*Expected data layout from the HP 8452A UV Vis machine and Olis software:*)
-(*Row 1 contains sample indices, column 1 contains wavelengths, the remaining columns are spectra*)
-(*The transpose ensures that each spectrum, originally a column, becomes a row as required by ListLinePlot3D*)
-(*Skip the first row if it is a sample index row (checked by indexRowQ), otherwise keep it.*)
-(*This allows the function to seamlessly accept either the raw dataset (with the index row) or a pre-trimmed dataset*)
-startRow=If[indexRowQ[data[[1]]],2,1];
-spectra=Transpose[data[[startRow;;,2;;]]];
-wavelengths=Round@data[[startRow;;,1]];
+(* The function is passed a number of spectra to plot *)
+(* The default is set to All, which corresponds to a pitch of 1. *)
+(* A caller could not possibly pass All as an argument because howMany is typed as an Integer in the function prototype,*)
+(* so its presence signals that the argument was omitted by the caller. *)
+(* If a numeric value is passed, then it calculates the pitch to give the closest achievable number: *)
+every=If[howMany===All,1,Ceiling[sampleCount/howMany]];
 
-(*The function is passed a number of spectra to plot*)
-(*The default is set to All, which corresponds to a pitch of 1.*)(*  A caller could not possibly pass All as an argument because howMany is typed as an Integer in the function prototype,*)(*  so its presence signals that the argument was omitted by the caller.*)
-(*If a numeric value is passed, then it calculates the pitch to give the closest achievable number:*)
-every=If[howMany===All,1,Ceiling[Length[spectra]/howMany]];
-
-(*the colors argument is either a list of colors, or a single color directive*)
-(*if it's a list, the use it as is*)
-(*if it's a single color, then make it into a list of two identical items, so it can be used in Blend below*)
+(* The colors argument is either a list of colors, or a single color directive *)
+(* If it's a list, the use it as is *)
+(* If it's a single color, then make it into a list of two identical items, so it can be used in Blend below *)
 colorList=If[Head[colors]===List,colors,{colors,colors}];
 
 ListLinePlot3D[
 spectra[[;;;;every]],
 
-(*The y data range spans the original spectrum count even after subsampling,*)
-(*so each plotted spectrum lands close to its true position along the y-axis:*)
-(*e.g. with every = 3, spectra appear close to their correct original indices 1, 4, 7... rather than being compressed to 1, 2, 3...*)
-DataRange->{
-MinMax@wavelengths,
-{1,Length@spectra}
-},
+(* The y data range spans the original spectrum count even after subsampling, *)
+(* so each plotted spectrum lands close to its true position along the y-axis: *)
+(* e.g.with every=3,spectra appear close to their correct original indices 1, 4, 7... rather than being compressed to 1, 2, 3... *)
+DataRange->{MinMax@wavelengths,{1,sampleCount}},
 
-(*There is no easy way to combine a color function with FillingStyle*)
-(*If any filling style (e.g. opacity) is specified, then the filling colors revert to the default style instead of the ones from ColorFunction*)
-(*so instead I outline the plot in black...*)
+(* There is no easy way to combine a color function with FillingStyle *)
+(* If any filling style (e.g.opacity) is specified, then the filling colors revert to the default style instead of the ones from ColorFunction *)
+(* so instead I outline the plot in black... *)
 PlotStyle->Directive[Black,AbsoluteThickness[2.5]],
-(*...and color the filling by hand using explicit Filling directives*)
+
+(* ...and color the filling by hand using explicit Filling directives *)
 Filling->MapThread[#1->{Axis,Blend[colorList,#2]}&,{#,Rescale[#]}&@Range[Length@spectra[[;;;;every]]]],
+
 Lighting->AmbientLight[White],
 
-PlotRange->OptionValue[PlotRange],
-PlotRangePadding->OptionValue[PlotRangePadding],
+PlotRange->OptionValue[PlotRange],PlotRangePadding->OptionValue[PlotRangePadding],
 Axes->OptionValue[Axes],AxesStyle->OptionValue[AxesStyle],AxesLabel->OptionValue[AxesLabel],
 BoxRatios->OptionValue[BoxRatios],ImageSize->OptionValue[ImageSize],
 
 (*Add any other options provided by the user, as long as they are valid ListLinePlot3D options.*)
-(*Placing them last is safe: any duplicates at the end are simply ignored by the first-wins rule.*)
+(*Placing them last is safe:any duplicates at the end are simply ignored by the first-wins rule.*)
 Sequence@@FilterRules[{options},Options@ListLinePlot3D]
 ]
 ]
